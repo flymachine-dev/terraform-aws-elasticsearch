@@ -198,11 +198,9 @@ resource "aws_elasticsearch_domain" "default" {
   depends_on = [aws_iam_service_linked_role.default]
 }
 
-data "aws_iam_policy_document" "default" {
-  count = module.this.enabled && (length(var.iam_authorizing_role_arns) > 0 || length(var.iam_role_arns) > 0) ? 1 : 0
-
+data "aws_iam_policy_document" "allow_anonymous_es_access" {
   statement {
-    sid    = "AllowEsAccessToSpecifiedRoles"
+    sid    = "AllowAnonymousEsAccess"
     effect = "Allow"
 
     actions = distinct(compact(var.iam_actions))
@@ -214,44 +212,14 @@ data "aws_iam_policy_document" "default" {
 
     principals {
       type        = "AWS"
-      identifiers = distinct(compact(concat(var.iam_role_arns, aws_iam_role.elasticsearch_user.*.arn)))
-    }
-  }
-
-  # This statement is for non VPC ES to allow anonymous access from whitelisted IP ranges without requests signing
-  # https://docs.aws.amazon.com/elasticsearch-service/latest/developerguide/es-ac.html#es-ac-types-ip
-  # https://aws.amazon.com/premiumsupport/knowledge-center/anonymous-not-authorized-elasticsearch/
-  dynamic "statement" {
-    for_each = length(var.allowed_cidr_blocks) > 0 && ! var.vpc_enabled ? [true] : []
-    content {
-      sid    = "AllowAnonymousEsAccessFromCIDR"
-      effect = "Allow"
-
-      actions = distinct(compact(var.iam_actions))
-
-      resources = [
-        join("", aws_elasticsearch_domain.default.*.arn),
-        "${join("", aws_elasticsearch_domain.default.*.arn)}/*"
-      ]
-
-      principals {
-        type        = "AWS"
-        identifiers = ["*"]
-      }
-
-      condition {
-        test     = "IpAddress"
-        values   = var.allowed_cidr_blocks
-        variable = "aws:SourceIp"
-      }
+      identifiers = ["*"]
     }
   }
 }
 
 resource "aws_elasticsearch_domain_policy" "default" {
-  count           = module.this.enabled && (length(var.iam_authorizing_role_arns) > 0 || length(var.iam_role_arns) > 0) ? 1 : 0
   domain_name     = module.this.id
-  access_policies = join("", data.aws_iam_policy_document.default.*.json)
+  access_policies = data.aws_iam_policy_document.allow_anonymous_es_access.json
 }
 
 module "domain_hostname" {
